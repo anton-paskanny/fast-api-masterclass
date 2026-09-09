@@ -1,10 +1,13 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, Field, StringConstraints, field_validator
-from sqlmodel import col, select
+from sqlmodel import col, exists, func, select
 
 from app.dependencies.database import SessionDep
+from app.dependencies.rooms import RoomDep
+from app.errors import SERVICE_UNDER_MAINTENANCE
+from app.models.booking import Booking
 from app.models.room import Room, RoomBase, RoomPublic, RoomUpdate
 
 router = APIRouter()
@@ -35,29 +38,12 @@ class RoomQueryParams(BaseModel):
         return search
 
 
-RoomId = Annotated[int, Path(ge=1, description="The id of the room to fetch")]
-
 MAINTENANCE_MODE = False
 
 
 def check_maintenance_mode():
     if MAINTENANCE_MODE:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Service is under maintenance. Try again later",
-        )
-
-
-async def get_room_or_404(session: SessionDep, room_id: RoomId):
-    room = await session.get(Room, room_id)
-    if not room:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Room not found"
-        )
-    return room
-
-
-RoomDep = Annotated[Room, Depends(get_room_or_404)]
+        raise SERVICE_UNDER_MAINTENANCE
 
 
 @router.post(
@@ -97,6 +83,68 @@ async def get_rooms(session: SessionDep, params: Annotated[RoomQueryParams, Quer
 
     rooms = await session.exec(statement)
     return rooms.all()
+
+
+@router.get("/booked", status_code=status.HTTP_200_OK, response_model=list[RoomPublic])
+async def get_booked_rooms(session: SessionDep):
+    room_has_bookings = exists().where(col(Booking.room_id) == Room.id)
+    statement = select(Room).where(room_has_bookings).order_by(col(Room.id))
+    result = await session.exec(statement)
+    rooms = result.all()
+    return rooms
+
+
+@router.get(
+    "/unbooked", status_code=status.HTTP_200_OK, response_model=list[RoomPublic]
+)
+async def get_unbooked_rooms(session: SessionDep):
+    room_does_not_have_bookings = ~exists().where(col(Booking.room_id) == Room.id)
+    statement = select(Room).where(room_does_not_have_bookings).order_by(col(Room.id))
+    result = await session.exec(statement)
+    rooms = result.all()
+    return rooms
+
+
+class RoomWithBookingCount(RoomPublic):
+    booking_count: int
+
+
+@router.get(
+    "/stats", status_code=status.HTTP_200_OK, response_model=list[RoomWithBookingCount]
+)
+async def get_room_stats(session: SessionDep):
+    statement = (
+        select(Room, func.count(col(Booking.id).label("booking_count")))
+        .outerjoin(Booking, col(Booking.room_id) == Room.id)
+        .group_by(col(Room.id))
+        .order_by(col(Room.id))
+    )
+
+    result = await session.exec(statement)
+    data = result.all()
+
+    return [
+        RoomWithBookingCount(**room.model_dump(), booking_count=booking_count)
+        for room, booking_count in data
+    ]
+
+
+@router.get(
+    "/booked-between", status_code=status.HTTP_200_OK, response_model=list[RoomPublic]
+)
+async def get_rooms_booked_between(session: SessionDep, start_date: str, end_date: str):
+    statement = (
+        select(Room)
+        .join(Booking)
+        .where(col(Booking.check_in) >= start_date)
+        .where(col(Booking.check_out) <= end_date)
+        .distinct()
+        .order_by(col(Room.id))
+    )
+
+    result = await session.exec(statement)
+    rooms = result.all()
+    return rooms
 
 
 @router.get(

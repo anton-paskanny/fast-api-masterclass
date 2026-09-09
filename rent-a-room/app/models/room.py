@@ -1,4 +1,9 @@
-from sqlmodel import Field, SQLModel
+from typing import TYPE_CHECKING
+
+from sqlmodel import Field, Relationship, SQLModel
+
+if TYPE_CHECKING:
+    from app.models.booking import Booking
 
 
 # Base model class - shared fields for all representations of a room
@@ -14,6 +19,10 @@ class Room(RoomBase, table=True):
     __tablename__: str = "rooms"
 
     id: int | None = Field(default=None, primary_key=True)
+
+    bookings: list["Booking"] = Relationship(
+        back_populates="room", passive_deletes="all"
+    )
 
 
 # Room response model - the payload to send back to the client
