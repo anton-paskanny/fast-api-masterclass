@@ -70,7 +70,7 @@ def login(
     if not verify_password(form_data.password, existing_user.hashed_password):
         raise credentials_exception
 
-    data = {"sub": existing_user.email}
+    data = {"sub": existing_user.email, "scopes": form_data.scopes}
     access_token = create_access_token(data=data)
     refresh_token = create_refresh_token(data=data)
 
