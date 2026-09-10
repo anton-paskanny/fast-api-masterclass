@@ -1,7 +1,9 @@
 from contextlib import asynccontextmanager
 
-from database import create_db_and_tables
 from fastapi import FastAPI
+
+from app.database import create_db_and_tables
+from app.routers import auth, users
 
 
 @asynccontextmanager
@@ -12,7 +14,5 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-
-@app.get("/")
-def root():
-    return {"message": "Auth demo is running"}
+app.include_router(auth.router)
+app.include_router(users.router)
